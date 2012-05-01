@@ -1,8 +1,8 @@
 /*
- * jQuery MediaWiki LinkSuggest 1.1.0
+ * jQuery MediaWiki LinkSuggest 1.2.0
  * JavaScript for LinkSuggest extension
  *
- * Copyright (c) 2010
+ * Copyright (c) 2010 - 2012
  * Authors: Inez Korczynski (korczynski at gmail dot com)
  *          Jesús Martínez Novo (martineznovo at gmail dot com)
  * Licensed under the GPL (GPL-LICENSE.txt) license.
@@ -11,6 +11,12 @@
  *	jquery.ui.autocomplete.js
  */
 (function( $ ) {
+
+// Private static variables
+var testerElement = null; // Tester element, global for caching and not recreate it everytime
+var cachedElement = null; // Cached element of the autocomplete to compare
+var cachedText = null; // Cached text before the position of the link
+var cachedPosition = null; // Cached position of the drop-down
 
 $.widget( "mw.linksuggest", {
 	options: {
@@ -37,18 +43,18 @@ $.widget( "mw.linksuggest", {
 				self._open.apply( self, arguments );
 			}
 		};
-		// Opera only prevents default behavior on keypress, needed for capturin arrows and enter
+		// Opera only prevents default behavior on keypress, needed for capturing arrows and enter
 		var eventType = $.browser.opera ? 'keypress' : 'keydown';
 		this.options = $.extend( opt, this.options );
 		this.element.autocomplete( this.options );
 		// Overwrite the keydown event of autocomplete to fix some undesired key events
 		this._legacyKeydown = this.element.data( 'events' ).keydown[0].handler;
-		this.element.unbind( 'keydown.autocomplete' )
-		.bind( eventType + '.linksuggest', function( thisInstance ) {
-			return function() {
-				thisInstance._keydown.apply(thisInstance, arguments);
-			};
-		}( this ));
+		this.element.unbind( 'keydown.autocomplete' ).bind( eventType + '.linksuggest',
+			function( thisInstance ) {
+				return function() {
+					thisInstance._keydown.apply(thisInstance, arguments);
+				};
+			}( this ));
 		// deactivate some menu weird behavior
 		this.element.data( 'autocomplete' ).menu.options.blur = null;
 	},
@@ -91,9 +97,9 @@ $.widget( "mw.linksuggest", {
 				return
 				break;
 		}
-		// If we not already returned from this function, fire the old autocomplete handler
+		// If we've not returned already from this function, fire the old autocomplete handler
 		if ( $.isFunction( this._legacyKeydown ) ) {
-			this._legacyKeydown.apply( this.element.data( 'autocomplete' ), arguments )
+			this._legacyKeydown.apply( this.element.data( 'autocomplete' ), arguments );
 		}
 	},
 	_sendQuery: function( request, response ) {
@@ -208,7 +214,7 @@ $.widget( "mw.linksuggest", {
 		return $.map( data.split( '\n' ), function( n ) {
 			if ( stripPrefix ) {
 				var pos = n.indexOf( ':' );
-				if ( pos >= 0 ) {
+				if ( pos != -1 ) {
 					n = n.substr( pos + 1 );
 				}
 			}
@@ -277,16 +283,16 @@ $.widget( "mw.linksuggest", {
 		}
 	},
 	_getCaretPosition: function() {
+		var result = [0, 0];
 		var control = this.element[0];
 		var left = 0;
 		var top = 0;
-		var tester = $('<div style="position:absolute;top:-1000px;left:-1000px;white-space:pre-wrap;visibility:hidden;"></div>');
 		var text = this._getText();
 		var caret = this._getCaret();
 		var initialcaret = caret;
 		if ( caret == 0 ) {
 			// This should never happen
-			return [ 0, 0 ];
+			return result;
 		}
 		// Get the position at the start of the link/template
 		for ( var i = caret - 1; i >= 0; i-- ) {
@@ -296,46 +302,42 @@ $.widget( "mw.linksuggest", {
 				break;
 			}
 		}
-		// Create a tester container to get the size of the text before the caret, and thus the position inside the element
-		// WARNING: You MUST apply a font-family CSS attribute to the textarea (to this particular one, or a generic
-		//	`textarea {font-famly: whatever;}´) so IE could retrieve the correct font-family used, otherwise it may
-		//  fail to position the drop-down correctly!
-		var props = 'padding-top padding-right padding-bottom padding-left border-top-style border-right-style border-bottom-style border-left-style border-top-width border-right-width border-bottom-width border-left-width font-size font-family font-weight line-height'.split(' ');
-		for ( var i = 0; i < props.length; i++ ) {
-			tester.css( props[i], this.element.css( props[i] ) );
-		}
- 		// Using clientWidth because if the textarea has scroll, the effective width for word wrap doesn't include the width used by the scrollbar
-		tester.width( control.clientWidth ).appendTo( document.body ).text( text.substr( 0, caret ) );
-		left = tester.outerWidth();
-		top = tester.outerHeight() - control.scrollTop;
-		var initialheight = tester.height();
-		var paddingText = '';
-		// Insert the text until the initial position of the element we want to suggest, plus a space, to get the characters needed to force a word wrap to a new line
-		tester.text( text.substr( 0, initialcaret ) + ' ' );
-		if ( tester.height() < initialheight ) {
-			// If the height has been reduced then the element to suggest is forcing a word wrap to a new line and it's on the left side of the textarea
-			left = 0;
-		} else {
-			// Get how many characters we need to force a word wrap to a new line, and then transform it in an actual size
-			// If we go beyond 500, something must be wrong
-			for ( var i = 1; i < 500; i++ ) {
-				paddingText += 'A';
-				// msie appendData doesn't update the height()
-				if ( $.browser.msie ) {
-					tester[0].firstChild.data += 'A';
-				} else {
-					tester[0].firstChild.appendData( 'A' );
-				}
-				if ( tester.height() > initialheight ) {
-					tester.css( 'width', 'auto' );
-					tester.text(paddingText);
-					left -= tester.outerWidth();
-					break;
-				}
+		var textBeforePosition = text.substr( 0, initialcaret );
+		// If the control isnot the same, clear the cached tester element
+		if (cachedElement !== control) {
+			cachedElement = control;
+			if (testerElement !== null) {
+				testerElement.remove();
+				testerElement = null;
 			}
 		}
-		tester.remove();
-		return [ left, top ];
+		// Use the cached tester element. Improves speed
+		if (testerElement === null) {
+			testerElement = $('<div style="position:absolute;top:-2000px;left:-2000px;white-space:pre-wrap;visibility:hidden;"></div>');
+			// Create a tester container to get the size of the text before the caret, and thus the position inside the element
+			// WARNING: You MUST apply a font-family CSS attribute to the textarea (to this particular one, or a generic
+			//	`textarea {font-famly: whatever;}´) so IE could retrieve the correct font-family used, otherwise it may
+			//  fail to position the drop-down correctly!
+			var props = 'padding-top padding-right padding-bottom padding-left border-top-style border-right-style border-bottom-style border-left-style border-top-width border-right-width border-bottom-width border-left-width font-size font-family font-weight line-height'.split(' ');
+			for ( var i = 0; i < props.length; i++ ) {
+				testerElement.css( props[i], this.element.css( props[i] ) );
+			}
+		} else {
+			// If the element and the text is the same, return the cached results
+			if (cachedText === textBeforePosition) {
+				return cachedPosition;
+			}
+		}
+		// A element that will provide the caret position
+		var caretElem = $('<span></span>').text( text.substring(initialcaret, caret) );
+ 		// Using scrollWidth because if the textarea has scroll, the effective width for word wrap doesn't include the width used by the scrollbar
+		testerElement.width( control.scrollWidth ).text( textBeforePosition ).append( caretElem ).appendTo( document.body );
+		var pos = caretElem.position();
+		result = [ pos.left, pos.top + caretElem.height() - control.scrollTop ];
+		// Store in the cache
+		cachedText = textBeforePosition;
+		cachedPosition = result;
+		return result;
 	},
 	_open: function( event, ui ) {
 		var menu = this.element.data( 'autocomplete' ).menu.element;
