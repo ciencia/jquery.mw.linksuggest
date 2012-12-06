@@ -14,8 +14,19 @@ External links:
  [1] http://www.mediawiki.org/wiki/Extension:LinkSuggest
  [2] http://www.mediawiki.org/
 
+For adding to a page it needs (in addition to the server-side extension installed):
+
+mw.loader.using('jquery.ui.autocomplete', function() {
+	importScriptURI('http://URL.TO/jquery.mw.linksuggest.js'); /* replace with the correct location of jquery.mw.linksuggest.js */
+});
+
+It requires ResourceLoader
+
+== NOTE ==
+
+Function _legacyKeydown NEEDS to match the content of jquery.ui.autocomplete.js "keydown.autocomplete" event, in addition to the "var self = this;" at the first line
+
 == TODO ==
 
-* Ensure that it works with ResourceLoader
 * Rewrite it to not depend on jquery.ui.autocomplete.js, since most of its functionality is being overrriden anyway
 

@@ -1,5 +1,5 @@
 /*
- * jQuery MediaWiki LinkSuggest 1.2.0
+ * jQuery MediaWiki LinkSuggest 1.3.0
  * JavaScript for LinkSuggest extension
  *
  * Copyright (c) 2010 - 2012
@@ -13,16 +13,17 @@
 (function( $ ) {
 
 // Private static variables
-var testerElement = null; // Tester element, global for caching and not recreate it everytime
-var cachedElement = null; // Cached element of the autocomplete to compare
-var cachedText = null; // Cached text before the position of the link
-var cachedPosition = null; // Cached position of the drop-down
+var testerElement = null, // Tester element, global for caching and not recreate it everytime
+	cachedElement = null, // Cached element of the autocomplete to compare
+	cachedText = null, // Cached text before the position of the link
+	cachedPosition = null, // Cached position of the drop-down
+	suppressKeyPress;
 
 $.widget( "mw.linksuggest", {
 	options: {
 		minLength: 3,
 		delay: 300,
-		url: window.wgScriptPath+window.wgScript
+		url: mw.config.get('wgScript')
 	},
 	_create: function() {
 		var self = this;
@@ -44,21 +45,84 @@ $.widget( "mw.linksuggest", {
 			}
 		};
 		// Opera only prevents default behavior on keypress, needed for capturing arrows and enter
-		var eventType = $.browser.opera ? 'keypress' : 'keydown';
 		this.options = $.extend( opt, this.options );
 		this.element.autocomplete( this.options );
 		// Overwrite the keydown event of autocomplete to fix some undesired key events
-		this._legacyKeydown = this.element.data( 'events' ).keydown[0].handler;
-		this.element.unbind( 'keydown.autocomplete' ).bind( eventType + '.linksuggest',
-			function( thisInstance ) {
-				return function() {
-					thisInstance._keydown.apply(thisInstance, arguments);
-				};
-			}( this ));
+		this.element.unbind( 'keydown.autocomplete' ).unbind( 'kepress.autocomplete' )
+			.bind( 'keydown.linksuggest',
+				function( thisInstance ) {
+					return function() {
+						thisInstance._keydown.apply(thisInstance, arguments);
+					};
+				}( this ))
+			.bind( 'keypress.linksuggest', function() {
+					if ( suppressKeyPress ) {
+						suppressKeyPress = false;
+						event.preventDefault();
+					}
+				});
 		// deactivate some menu weird behavior
 		this.element.data( 'autocomplete' ).menu.options.blur = null;
 	},
-	_legacyKeydown: null,
+	// function copied from jQuery UI Autocomplete 1.8.17. Keep in sync with the same used in MediaWiki
+	_legacyKeydown: function( event ) {
+		var self = this;
+		if ( self.options.disabled || self.element.propAttr( "readOnly" ) ) {
+			return;
+		}
+
+		suppressKeyPress = false;
+		var keyCode = $.ui.keyCode;
+		switch( event.keyCode ) {
+		case keyCode.PAGE_UP:
+			self._move( "previousPage", event );
+			break;
+		case keyCode.PAGE_DOWN:
+			self._move( "nextPage", event );
+			break;
+		case keyCode.UP:
+			self._move( "previous", event );
+			// prevent moving cursor to beginning of text field in some browsers
+			event.preventDefault();
+			break;
+		case keyCode.DOWN:
+			self._move( "next", event );
+			// prevent moving cursor to end of text field in some browsers
+			event.preventDefault();
+			break;
+		case keyCode.ENTER:
+		case keyCode.NUMPAD_ENTER:
+			// when menu is open and has focus
+			if ( self.menu.active ) {
+				// #6055 - Opera still allows the keypress to occur
+				// which causes forms to submit
+				suppressKeyPress = true;
+				event.preventDefault();
+			}
+			//passthrough - ENTER and TAB both select the current element
+		case keyCode.TAB:
+			if ( !self.menu.active ) {
+				return;
+			}
+			self.menu.select( event );
+			break;
+		case keyCode.ESCAPE:
+			self.element.val( self.term );
+			self.close( event );
+			break;
+		default:
+			// keypress is triggered before the input value is changed
+			clearTimeout( self.searching );
+			self.searching = setTimeout(function() {
+				// only search if the value has changed
+				if ( self.term != self.element.val() ) {
+					self.selectedItem = null;
+					self.search( null, event );
+				}
+			}, self.options.delay );
+			break;
+		}
+	},
 	_keydown: function( event ) {
 		var keyCode = $.ui.keyCode;
 		switch( event.keyCode ) {
@@ -98,9 +162,7 @@ $.widget( "mw.linksuggest", {
 				break;
 		}
 		// If we've not returned already from this function, fire the old autocomplete handler
-		if ( $.isFunction( this._legacyKeydown ) ) {
-			this._legacyKeydown.apply( this.element.data( 'autocomplete' ), arguments );
-		}
+		this._legacyKeydown.apply( this.element.data( 'autocomplete' ), arguments );
 	},
 	_sendQuery: function( request, response ) {
 		var emptyset = [];
